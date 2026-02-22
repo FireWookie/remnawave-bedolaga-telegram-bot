@@ -66,6 +66,7 @@ class YooKassaService:
         metadata: dict[str, Any],
         receipt_email: str | None = None,
         receipt_phone: str | None = None,
+        save_payment_method: bool = False,
     ) -> dict[str, Any] | None:
         """Создает платеж в YooKassa"""
 
@@ -96,6 +97,9 @@ class YooKassaService:
             builder.set_confirmation({'type': ConfirmationType.REDIRECT, 'return_url': self.return_url})
             builder.set_description(description)
             builder.set_metadata(metadata)
+
+            if save_payment_method:
+                builder.set_save_payment_method(True)
 
             receipt_items_list: list[dict[str, Any]] = [
                 {
@@ -136,7 +140,7 @@ class YooKassaService:
                 paid=response.paid,
             )
 
-            return {
+            result = {
                 'id': response.id,
                 'confirmation_url': response.confirmation.confirmation_url if response.confirmation else None,
                 'status': response.status,
@@ -152,6 +156,24 @@ class YooKassaService:
                 'description_from_yk': response.description,
                 'test_mode': response.test if hasattr(response, 'test') else None,
             }
+
+            # Extract payment method info for recurring payments
+            if response.payment_method:
+                pm = response.payment_method
+                result['payment_method_id'] = pm.id if hasattr(pm, 'id') else None
+                result['payment_method_saved'] = pm.saved if hasattr(pm, 'saved') else False
+                result['payment_method_type'] = pm.type if hasattr(pm, 'type') else None
+                if hasattr(pm, 'card') and pm.card:
+                    card = pm.card
+                    result['payment_method_card'] = {
+                        'first6': getattr(card, 'first6', None),
+                        'last4': getattr(card, 'last4', None),
+                        'card_type': getattr(card, 'card_type', None),
+                        'expiry_month': getattr(card, 'expiry_month', None),
+                        'expiry_year': getattr(card, 'expiry_year', None),
+                    }
+
+            return result
         except Exception as e:
             logger.error('Ошибка создания платежа YooKassa', error=e, exc_info=True)
             return None
@@ -373,6 +395,109 @@ class YooKassaService:
             )
             return None
 
+    async def create_recurring_payment(
+        self,
+        payment_method_id: str,
+        amount: float,
+        currency: str,
+        description: str,
+        metadata: dict[str, Any],
+        receipt_email: str | None = None,
+        receipt_phone: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Создаёт рекуррентный платёж (без confirmation, без участия пользователя)."""
+        if not self.configured:
+            logger.error('YooKassa не сконфигурирован. Невозможно создать рекуррентный платеж.')
+            return None
+
+        customer_contact_for_receipt = {}
+        if receipt_email:
+            customer_contact_for_receipt['email'] = receipt_email
+        elif receipt_phone:
+            customer_contact_for_receipt['phone'] = receipt_phone
+        elif hasattr(settings, 'YOOKASSA_DEFAULT_RECEIPT_EMAIL') and settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL:
+            customer_contact_for_receipt['email'] = settings.YOOKASSA_DEFAULT_RECEIPT_EMAIL
+        else:
+            logger.error(
+                'КРИТИЧНО: Не предоставлен email/телефон для чека рекуррентного платежа YooKassa.'
+            )
+            return {
+                'error': True,
+                'internal_message': 'Отсутствуют контактные данные для чека рекуррентного платежа.',
+            }
+
+        try:
+            payment_data: dict[str, Any] = {
+                'amount': {
+                    'value': str(round(amount, 2)),
+                    'currency': currency.upper(),
+                },
+                'capture': True,
+                'payment_method_id': payment_method_id,
+                'description': description,
+                'metadata': metadata,
+                'receipt': {
+                    'customer': customer_contact_for_receipt,
+                    'items': [
+                        {
+                            'description': description[:128],
+                            'quantity': '1.00',
+                            'amount': {
+                                'value': str(round(amount, 2)),
+                                'currency': currency.upper(),
+                            },
+                            'vat_code': str(getattr(settings, 'YOOKASSA_VAT_CODE', 1)),
+                            'payment_mode': getattr(settings, 'YOOKASSA_PAYMENT_MODE', 'full_payment'),
+                            'payment_subject': getattr(settings, 'YOOKASSA_PAYMENT_SUBJECT', 'service'),
+                        }
+                    ],
+                },
+            }
+
+            idempotence_key = str(uuid.uuid4())
+
+            logger.info(
+                'Создание рекуррентного платежа YooKassa',
+                payment_method_id=payment_method_id,
+                amount=amount,
+                currency=currency,
+                idempotence_key=idempotence_key,
+            )
+
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None, lambda: YooKassaPayment.create(payment_data, idempotence_key)
+            )
+
+            logger.info(
+                'Ответ YooKassa рекуррентный: ID=, Status=, Paid',
+                response_id=response.id,
+                status=response.status,
+                paid=response.paid,
+            )
+
+            return {
+                'id': response.id,
+                'status': response.status,
+                'paid': response.paid,
+                'amount_value': float(response.amount.value),
+                'amount_currency': response.amount.currency,
+                'metadata': response.metadata,
+                'idempotence_key_used': idempotence_key,
+                'refundable': response.refundable,
+                'created_at': response.created_at.isoformat()
+                if hasattr(response.created_at, 'isoformat')
+                else str(response.created_at),
+                'description_from_yk': response.description,
+                'test_mode': response.test if hasattr(response, 'test') else None,
+                'captured_at': response.captured_at.isoformat()
+                if response.captured_at and hasattr(response.captured_at, 'isoformat')
+                else None,
+            }
+        except Exception as e:
+            logger.error('Ошибка создания рекуррентного платежа YooKassa', error=e, exc_info=True)
+            return None
+
     async def get_payment_info(self, payment_id_in_yookassa: str) -> dict[str, Any] | None:
         if not self.configured:
             logger.error('YooKassa не сконфигурирован. Невозможно получить информацию о платеже.')
@@ -391,7 +516,7 @@ class YooKassaService:
                     status=payment_info_yk.status,
                     paid=payment_info_yk.paid,
                 )
-                return {
+                result = {
                     'id': payment_info_yk.id,
                     'status': payment_info_yk.status,
                     'paid': payment_info_yk.paid,
@@ -411,6 +536,23 @@ class YooKassaService:
                     else None,
                     'test_mode': payment_info_yk.test if hasattr(payment_info_yk, 'test') else None,
                 }
+
+                # Extract payment method details for recurring
+                if payment_info_yk.payment_method:
+                    pm = payment_info_yk.payment_method
+                    result['payment_method_id'] = pm.id if hasattr(pm, 'id') else None
+                    result['payment_method_saved'] = pm.saved if hasattr(pm, 'saved') else False
+                    if hasattr(pm, 'card') and pm.card:
+                        card = pm.card
+                        result['payment_method_card'] = {
+                            'first6': getattr(card, 'first6', None),
+                            'last4': getattr(card, 'last4', None),
+                            'card_type': getattr(card, 'card_type', None),
+                            'expiry_month': getattr(card, 'expiry_month', None),
+                            'expiry_year': getattr(card, 'expiry_year', None),
+                        }
+
+                return result
             logger.warning('Платеж не найден в YooKassa ID', payment_id_in_yookassa=payment_id_in_yookassa)
             return None
         except YooKassaNotFoundError:

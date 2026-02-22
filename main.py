@@ -42,6 +42,7 @@ from app.services.system_settings_service import bot_configuration_service
 from app.services.traffic_monitoring_service import traffic_monitoring_scheduler
 from app.services.version_service import version_service
 from app.services.web_api_token_service import ensure_default_web_api_token
+from app.services.yookassa_recurring_service import yookassa_recurring_service
 from app.utils.log_handlers import ExcludePaymentFilter, LevelFilterHandler
 from app.utils.payment_logger import configure_payment_logger
 from app.utils.startup_timeline import StartupTimeline
@@ -171,6 +172,7 @@ async def main():
     version_check_task = None
     traffic_monitoring_task = None
     daily_subscription_task = None
+    yookassa_recurring_task = None
     polling_task = None
     web_api_server = None
     telegram_webhook_enabled = False
@@ -285,6 +287,7 @@ async def main():
         ban_notification_service.set_bot(bot)
         traffic_monitoring_scheduler.set_bot(bot)
         daily_subscription_service.set_bot(bot)
+        yookassa_recurring_service.set_bot(bot)
         telegram_notifier.set_bot(bot)
 
         # Initialize email broadcast service
@@ -642,6 +645,19 @@ async def main():
                 stage.skip('Суточные подписки отключены настройками')
 
         async with timeline.stage(
+            'Рекуррентные платежи YooKassa',
+            '🔄',
+            success_message='Сервис рекуррентных платежей запущен',
+        ) as stage:
+            if yookassa_recurring_service.is_enabled():
+                yookassa_recurring_task = asyncio.create_task(yookassa_recurring_service.start_monitoring())
+                interval_minutes = yookassa_recurring_service.get_check_interval_minutes()
+                stage.log(f'Интервал проверки: {interval_minutes} мин')
+            else:
+                yookassa_recurring_task = None
+                stage.skip('Рекуррентные платежи отключены настройками')
+
+        async with timeline.stage(
             'Сервис проверки версий',
             '📄',
             success_message='Проверка версий запущена',
@@ -710,6 +726,7 @@ async def main():
             f'Техработы: {"Включен" if maintenance_task else "Отключен"}',
             f'Мониторинг трафика: {"Включен" if traffic_monitoring_task else "Отключен"}',
             f'Суточные подписки: {"Включен" if daily_subscription_task else "Отключен"}',
+            f'Рекуррентные платежи: {"Включен" if yookassa_recurring_task else "Отключен"}',
             f'Проверка версий: {"Включен" if version_check_task else "Отключен"}',
             f'Отчеты: {"Включен" if reporting_service.is_running() else "Отключен"}',
         ]
@@ -772,6 +789,16 @@ async def main():
                         if daily_subscription_service.is_enabled():
                             logger.info('🔄 Перезапуск сервиса суточных подписок...')
                             daily_subscription_task = asyncio.create_task(daily_subscription_service.start_monitoring())
+
+                if yookassa_recurring_task and yookassa_recurring_task.done():
+                    exception = yookassa_recurring_task.exception()
+                    if exception:
+                        logger.error('Сервис рекуррентных платежей завершился с ошибкой', error=exception)
+                        if yookassa_recurring_service.is_enabled():
+                            logger.info('🔄 Перезапуск сервиса рекуррентных платежей...')
+                            yookassa_recurring_task = asyncio.create_task(
+                                yookassa_recurring_service.start_monitoring()
+                            )
 
                 if auto_verification_active and not auto_payment_verification_service.is_running():
                     logger.warning('Сервис автопроверки пополнений остановился, пробуем перезапустить...')
@@ -844,6 +871,15 @@ async def main():
             daily_subscription_task.cancel()
             try:
                 await daily_subscription_task
+            except asyncio.CancelledError:
+                pass
+
+        if yookassa_recurring_task and not yookassa_recurring_task.done():
+            logger.info('ℹ️ Остановка сервиса рекуррентных платежей...')
+            yookassa_recurring_service.stop_monitoring()
+            yookassa_recurring_task.cancel()
+            try:
+                await yookassa_recurring_task
             except asyncio.CancelledError:
                 pass
 

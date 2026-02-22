@@ -272,6 +272,31 @@ async def link_heleket_payment_to_transaction(*args, **kwargs):
     return await heleket_crud.link_heleket_payment_to_transaction(*args, **kwargs)
 
 
+async def create_yookassa_saved_payment_method(*args, **kwargs):
+    crud = import_module('app.database.crud.yookassa_saved_payment_method')
+    return await crud.create_saved_payment_method(*args, **kwargs)
+
+
+async def get_active_yookassa_saved_methods(*args, **kwargs):
+    crud = import_module('app.database.crud.yookassa_saved_payment_method')
+    return await crud.get_active_saved_methods(*args, **kwargs)
+
+
+async def get_yookassa_saved_method_by_payment_method_id(*args, **kwargs):
+    crud = import_module('app.database.crud.yookassa_saved_payment_method')
+    return await crud.get_saved_method_by_payment_method_id(*args, **kwargs)
+
+
+async def deactivate_yookassa_saved_method(*args, **kwargs):
+    crud = import_module('app.database.crud.yookassa_saved_payment_method')
+    return await crud.deactivate_saved_method(*args, **kwargs)
+
+
+async def deactivate_all_yookassa_user_methods(*args, **kwargs):
+    crud = import_module('app.database.crud.yookassa_saved_payment_method')
+    return await crud.deactivate_all_user_methods(*args, **kwargs)
+
+
 async def create_cloudpayments_payment(*args, **kwargs):
     cloudpayments_crud = import_module('app.database.crud.cloudpayments')
     return await cloudpayments_crud.create_cloudpayments_payment(*args, **kwargs)

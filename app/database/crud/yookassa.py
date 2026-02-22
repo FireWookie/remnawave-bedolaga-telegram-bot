@@ -25,6 +25,10 @@ async def create_yookassa_payment(
     payment_method_type: str | None = None,
     yookassa_created_at: datetime | None = None,
     test_mode: bool = False,
+    payment_method_id: str | None = None,
+    payment_method_saved: bool = False,
+    is_recurring: bool = False,
+    saved_payment_method_id: int | None = None,
 ) -> YooKassaPayment | None:
     payment = YooKassaPayment(
         user_id=user_id,
@@ -38,6 +42,10 @@ async def create_yookassa_payment(
         payment_method_type=payment_method_type,
         yookassa_created_at=yookassa_created_at,
         test_mode=test_mode,
+        payment_method_id=payment_method_id,
+        payment_method_saved=payment_method_saved,
+        is_recurring=is_recurring,
+        saved_payment_method_id=saved_payment_method_id,
     )
 
     db.add(payment)
@@ -87,6 +95,8 @@ async def update_yookassa_payment_status(
     is_captured: bool = False,
     captured_at: datetime | None = None,
     payment_method_type: str | None = None,
+    payment_method_id: str | None = None,
+    payment_method_saved: bool | None = None,
 ) -> YooKassaPayment | None:
     update_data = {'status': status, 'is_paid': is_paid, 'is_captured': is_captured, 'updated_at': datetime.now(UTC)}
 
@@ -95,6 +105,12 @@ async def update_yookassa_payment_status(
 
     if payment_method_type:
         update_data['payment_method_type'] = payment_method_type
+
+    if payment_method_id:
+        update_data['payment_method_id'] = payment_method_id
+
+    if payment_method_saved is not None:
+        update_data['payment_method_saved'] = payment_method_saved
 
     await db.execute(
         update(YooKassaPayment).where(YooKassaPayment.yookassa_payment_id == yookassa_payment_id).values(**update_data)

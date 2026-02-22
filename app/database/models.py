@@ -208,8 +208,14 @@ class YooKassaPayment(Base):
     updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
     yookassa_created_at = Column(AwareDateTime(), nullable=True)
     captured_at = Column(AwareDateTime(), nullable=True)
+    payment_method_id = Column(String(255), nullable=True, index=True)  # ID способа оплаты от YooKassa
+    payment_method_saved = Column(Boolean, default=False)  # Метод был сохранён
+    is_recurring = Column(Boolean, default=False)  # Рекуррентный платёж (без участия пользователя)
+    saved_payment_method_id = Column(Integer, ForeignKey('yookassa_saved_payment_methods.id'), nullable=True)
+
     user = relationship('User', backref='yookassa_payments')
     transaction = relationship('Transaction', backref='yookassa_payment')
+    saved_payment_method = relationship('YooKassaSavedPaymentMethod', foreign_keys=[saved_payment_method_id])
 
     @property
     def amount_rubles(self) -> float:
@@ -233,6 +239,28 @@ class YooKassaPayment(Base):
 
     def __repr__(self):
         return f'<YooKassaPayment(id={self.id}, yookassa_id={self.yookassa_payment_id}, amount={self.amount_rubles}₽, status={self.status})>'
+
+
+class YooKassaSavedPaymentMethod(Base):
+    __tablename__ = 'yookassa_saved_payment_methods'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+    payment_method_id = Column(String(255), unique=True, nullable=False, index=True)  # ID от YooKassa
+    payment_method_type = Column(String(50), nullable=True)  # bank_card, sbp и т.д.
+    card_first_six = Column(String(6), nullable=True)
+    card_last_four = Column(String(4), nullable=True)
+    card_type = Column(String(50), nullable=True)  # Visa, MasterCard, Mir
+    card_expiry_month = Column(String(2), nullable=True)
+    card_expiry_year = Column(String(4), nullable=True)
+    title = Column(String(255), nullable=True)  # Отображаемое название: "Visa **** 4242"
+    is_active = Column(Boolean, default=True)
+    created_at = Column(AwareDateTime(), default=func.now())
+    updated_at = Column(AwareDateTime(), default=func.now(), onupdate=func.now())
+    source_payment_id = Column(Integer, ForeignKey('yookassa_payments.id'), nullable=True)
+
+    user = relationship('User', backref='yookassa_saved_methods')
+    source_payment = relationship('YooKassaPayment', foreign_keys=[source_payment_id])
 
 
 class CryptoBotPayment(Base):

@@ -133,6 +133,10 @@ class YooKassaPaymentMixin:
                 }
             )
 
+            # Determine save_payment_method flag from settings
+            save_pm_mode = getattr(settings, 'YOOKASSA_SAVE_PAYMENT_METHOD', 'never')
+            save_payment_method = save_pm_mode == 'always'
+
             yookassa_response = await self.yookassa_service.create_payment(
                 amount=amount_rubles,
                 currency='RUB',
@@ -140,6 +144,7 @@ class YooKassaPaymentMixin:
                 metadata=payment_metadata,
                 receipt_email=receipt_email,
                 receipt_phone=receipt_phone,
+                save_payment_method=save_payment_method,
             )
 
             if not yookassa_response or yookassa_response.get('error'):
@@ -165,9 +170,11 @@ class YooKassaPaymentMixin:
                 status=yookassa_response['status'],
                 confirmation_url=yookassa_response.get('confirmation_url'),
                 metadata_json=payment_metadata,
-                payment_method_type=None,
+                payment_method_type=yookassa_response.get('payment_method_type'),
                 yookassa_created_at=yookassa_created_at,
                 test_mode=yookassa_response.get('test_mode', False),
+                payment_method_id=yookassa_response.get('payment_method_id'),
+                payment_method_saved=yookassa_response.get('payment_method_saved', False),
             )
 
             logger.info(
@@ -1098,6 +1105,10 @@ class YooKassaPaymentMixin:
                     telegram_user_id=user.telegram_id if user else None,
                 )
 
+            # Сохранение платёжного метода для рекуррентных платежей
+            if getattr(payment, 'payment_method_saved', False) and getattr(payment, 'payment_method_id', None):
+                await self._save_yookassa_payment_method(db, payment)
+
             return True
 
         except Exception as error:
@@ -1148,6 +1159,203 @@ class YooKassaPaymentMixin:
             )
 
         return updated_metadata
+
+    async def _save_yookassa_payment_method(
+        self,
+        db: AsyncSession,
+        payment: YooKassaPayment,
+    ) -> None:
+        """Сохраняет платёжный метод из успешного платежа, если он ещё не сохранён."""
+        try:
+            from app.database.crud.yookassa_saved_payment_method import (
+                create_saved_payment_method,
+                get_saved_method_by_payment_method_id,
+            )
+
+            pm_id = payment.payment_method_id
+            if not pm_id:
+                return
+
+            existing = await get_saved_method_by_payment_method_id(db, pm_id)
+            if existing:
+                logger.debug(
+                    'Платёжный метод уже сохранён',
+                    payment_method_id=pm_id,
+                    user_id=payment.user_id,
+                )
+                return
+
+            # Try to get card details from remote payment info
+            card_info: dict = {}
+            if getattr(self, 'yookassa_service', None):
+                try:
+                    remote = await self.yookassa_service.get_payment_info(payment.yookassa_payment_id)
+                    if remote and remote.get('payment_method_card'):
+                        card_info = remote['payment_method_card']
+                except Exception as e:
+                    logger.debug('Не удалось получить данные карты для сохранения', error=e)
+
+            card_type = card_info.get('card_type', '')
+            last4 = card_info.get('last4', '')
+            title = f'{card_type} **** {last4}'.strip() if (card_type or last4) else None
+
+            await create_saved_payment_method(
+                db=db,
+                user_id=payment.user_id,
+                payment_method_id=pm_id,
+                payment_method_type=payment.payment_method_type,
+                card_first_six=card_info.get('first6'),
+                card_last_four=last4 or None,
+                card_type=card_type or None,
+                card_expiry_month=card_info.get('expiry_month'),
+                card_expiry_year=card_info.get('expiry_year'),
+                title=title,
+                source_payment_id=payment.id,
+            )
+
+            logger.info(
+                'Сохранён платёжный метод из платежа YooKassa',
+                payment_method_id=pm_id,
+                user_id=payment.user_id,
+                title=title,
+            )
+        except Exception as e:
+            logger.error(
+                'Ошибка сохранения платёжного метода',
+                payment_method_id=getattr(payment, 'payment_method_id', None),
+                error=e,
+                exc_info=True,
+            )
+
+    async def create_recurring_charge(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        saved_method_id: int,
+        amount_kopeks: int,
+        description: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Создаёт рекуррентный платёж (автосписание) без участия пользователя."""
+        if not getattr(self, 'yookassa_service', None):
+            logger.error('YooKassa сервис не инициализирован для рекуррентного платежа')
+            return None
+
+        payment_module = import_module('app.services.payment_service')
+
+        try:
+            from app.database.crud.yookassa_saved_payment_method import get_active_saved_methods
+
+            # Load saved method
+            methods = await get_active_saved_methods(db, user_id)
+            saved_method = next((m for m in methods if m.id == saved_method_id), None)
+
+            if not saved_method:
+                logger.error(
+                    'Сохранённый метод не найден',
+                    saved_method_id=saved_method_id,
+                    user_id=user_id,
+                )
+                return None
+
+            amount_rubles = amount_kopeks / 100
+            payment_metadata = metadata.copy() if metadata else {}
+            payment_metadata.update({
+                'user_id': str(user_id),
+                'amount_kopeks': str(amount_kopeks),
+                'type': 'recurring',
+                'saved_method_id': str(saved_method_id),
+            })
+
+            yookassa_response = await self.yookassa_service.create_recurring_payment(
+                payment_method_id=saved_method.payment_method_id,
+                amount=amount_rubles,
+                currency='RUB',
+                description=description,
+                metadata=payment_metadata,
+            )
+
+            if not yookassa_response or yookassa_response.get('error'):
+                logger.error(
+                    'Ошибка создания рекуррентного платежа YooKassa',
+                    yookassa_response=yookassa_response,
+                )
+                return None
+
+            # Parse created_at
+            yookassa_created_at = None
+            if yookassa_response.get('created_at'):
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(yookassa_response['created_at'].replace('Z', '+00:00'))
+                    yookassa_created_at = dt
+                except Exception:
+                    pass
+
+            # Create local payment record
+            local_payment = await payment_module.create_yookassa_payment(
+                db=db,
+                user_id=user_id,
+                yookassa_payment_id=yookassa_response['id'],
+                amount_kopeks=amount_kopeks,
+                currency='RUB',
+                description=description,
+                status=yookassa_response['status'],
+                confirmation_url=None,
+                metadata_json=payment_metadata,
+                payment_method_type=saved_method.payment_method_type,
+                yookassa_created_at=yookassa_created_at,
+                test_mode=yookassa_response.get('test_mode', False),
+                payment_method_id=saved_method.payment_method_id,
+                payment_method_saved=True,
+                is_recurring=True,
+                saved_payment_method_id=saved_method_id,
+            )
+
+            result = {
+                'local_payment_id': local_payment.id if local_payment else None,
+                'yookassa_payment_id': yookassa_response['id'],
+                'status': yookassa_response['status'],
+                'paid': yookassa_response.get('paid', False),
+                'amount_kopeks': amount_kopeks,
+                'amount_rubles': amount_rubles,
+            }
+
+            # If payment succeeded immediately, process it
+            if yookassa_response.get('status') == 'succeeded' and yookassa_response.get('paid'):
+                if local_payment:
+                    # Update local status
+                    await payment_module.update_yookassa_payment_status(
+                        db=db,
+                        yookassa_payment_id=yookassa_response['id'],
+                        status='succeeded',
+                        is_paid=True,
+                        is_captured=True,
+                    )
+                    # Reload to get updated state
+                    local_payment = await payment_module.get_yookassa_payment_by_id(
+                        db, yookassa_response['id']
+                    )
+                    if local_payment:
+                        await self._process_successful_yookassa_payment(db, local_payment)
+
+            logger.info(
+                'Рекуррентный платёж создан',
+                yookassa_id=yookassa_response['id'],
+                status=yookassa_response['status'],
+                user_id=user_id,
+            )
+            return result
+
+        except Exception as e:
+            logger.error(
+                'Ошибка создания рекуррентного платежа',
+                user_id=user_id,
+                saved_method_id=saved_method_id,
+                error=e,
+                exc_info=True,
+            )
+            return None
 
     async def _create_nalogo_receipt(
         self,
@@ -1267,10 +1475,17 @@ class YooKassaPaymentMixin:
         payment.status = event_object.get('status', payment.status)
         payment.confirmation_url = self._extract_confirmation_url(event_object)
 
-        payment.payment_method_type = (event_object.get('payment_method') or {}).get(
-            'type'
-        ) or payment.payment_method_type
+        pm_data = event_object.get('payment_method') or {}
+        payment.payment_method_type = pm_data.get('type') or payment.payment_method_type
         payment.refundable = event_object.get('refundable', getattr(payment, 'refundable', False))
+
+        # Extract payment method ID and saved flag from webhook
+        pm_id = pm_data.get('id')
+        if pm_id:
+            payment.payment_method_id = pm_id
+        pm_saved = pm_data.get('saved')
+        if pm_saved is not None:
+            payment.payment_method_saved = bool(pm_saved)
 
         current_paid = bool(getattr(payment, 'is_paid', getattr(payment, 'paid', False)))
         payment.is_paid = bool(event_object.get('paid', current_paid))

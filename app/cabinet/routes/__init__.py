@@ -38,6 +38,7 @@ from .polls import router as polls_router
 from .promo import router as promo_router
 from .promocode import router as promocode_router
 from .referral import router as referral_router
+from .saved_payment_methods import router as saved_payment_methods_router
 from .subscription import router as subscription_router
 from .ticket_notifications import (
     admin_router as admin_ticket_notifications_router,
@@ -57,6 +58,7 @@ router.include_router(auth_router)
 router.include_router(oauth_router)
 router.include_router(subscription_router)
 router.include_router(balance_router)
+router.include_router(saved_payment_methods_router)
 router.include_router(referral_router)
 router.include_router(partner_application_router)
 router.include_router(withdrawal_router)
