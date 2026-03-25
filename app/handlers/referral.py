@@ -20,6 +20,7 @@ from app.states import ReferralWithdrawalStates
 from app.utils.photo_message import edit_or_answer_photo
 from app.utils.user_utils import (
     get_detailed_referral_list,
+    get_effective_max_commission_payments,
     get_effective_referral_commission_percent,
     get_referral_analytics,
     get_user_referral_summary,
@@ -100,13 +101,14 @@ async def show_referral_info(callback: types.CallbackQuery, db_user: User, db: A
             '• Вы получаете при первом пополнении реферала: <b>{bonus}</b>',
         ).format(bonus=texts.format_price(settings.REFERRAL_INVITER_BONUS_KOPEKS))
 
-    if settings.REFERRAL_MAX_COMMISSION_PAYMENTS > 0:
+    effective_max_payments = get_effective_max_commission_payments(db_user)
+    if effective_max_payments > 0:
         commission_line = texts.t(
             'REFERRAL_REWARD_COMMISSION_LIMITED',
             '• Комиссия с первых {max_payments} пополнений реферала: <b>{percent}%</b>',
         ).format(
             percent=get_effective_referral_commission_percent(db_user),
-            max_payments=settings.REFERRAL_MAX_COMMISSION_PAYMENTS,
+            max_payments=effective_max_payments,
         )
     else:
         commission_line = texts.t(

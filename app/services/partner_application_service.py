@@ -71,6 +71,7 @@ class PartnerApplicationService:
         application_id: int,
         admin_id: int,
         commission_percent: int,
+        max_commission_payments: int | None = None,
         comment: str | None = None,
     ) -> tuple[bool, str]:
         """
@@ -98,6 +99,8 @@ class PartnerApplicationService:
 
         user.partner_status = PartnerStatus.APPROVED.value
         user.referral_commission_percent = commission_percent
+        if max_commission_payments is not None:
+            user.referral_max_commission_payments = max_commission_payments
 
         application.status = PartnerStatus.APPROVED.value
         application.approved_commission_percent = commission_percent

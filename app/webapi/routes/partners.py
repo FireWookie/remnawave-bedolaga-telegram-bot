@@ -83,6 +83,7 @@ def _serialize_referrer(user: User, stats: dict) -> PartnerReferrerItem:
         last_name=user.last_name,
         referral_code=user.referral_code,
         referral_commission_percent=getattr(user, 'referral_commission_percent', None),
+        referral_max_commission_payments=getattr(user, 'referral_max_commission_payments', None),
         effective_referral_commission_percent=get_effective_referral_commission_percent(user),
         invited_count=int(stats.get('invited_count') or 0),
         active_referrals=int(stats.get('active_referrals') or 0),
@@ -208,11 +209,13 @@ async def update_referrer_commission(
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, 'User not found')
 
-    await update_user(
-        db,
-        user,
-        referral_commission_percent=payload.referral_commission_percent,
-    )
+    update_kwargs: dict[str, Any] = {}
+    if payload.referral_commission_percent is not None:
+        update_kwargs['referral_commission_percent'] = payload.referral_commission_percent
+    if payload.referral_max_commission_payments is not None:
+        update_kwargs['referral_max_commission_payments'] = payload.referral_max_commission_payments
+    if update_kwargs:
+        await update_user(db, user, **update_kwargs)
 
     stats = await get_user_referral_stats(db, user.id)
     return _serialize_referrer(user, stats)

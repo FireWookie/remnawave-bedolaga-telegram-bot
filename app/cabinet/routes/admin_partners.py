@@ -216,6 +216,7 @@ async def approve_application(
         application_id=application_id,
         admin_id=admin.id,
         commission_percent=request.commission_percent,
+        max_commission_payments=request.max_commission_payments,
         comment=request.comment,
     )
 
@@ -389,6 +390,7 @@ async def list_partners(
                 first_name=user.first_name,
                 telegram_id=user.telegram_id,
                 commission_percent=user.referral_commission_percent,
+                max_commission_payments=user.referral_max_commission_payments,
                 total_referrals=referral_count_map.get(user.id, 0),
                 total_earnings_kopeks=earnings_map.get(user.id, 0),
                 balance_kopeks=user.balance_kopeks,
@@ -450,6 +452,7 @@ async def get_partner_detail(
         first_name=user.first_name,
         telegram_id=user.telegram_id,
         commission_percent=user.referral_commission_percent,
+        max_commission_payments=user.referral_max_commission_payments,
         partner_status=user.partner_status,
         balance_kopeks=user.balance_kopeks,
         total_referrals=summary['total_referrals'],
@@ -487,7 +490,10 @@ async def update_commission(
         )
 
     old_commission = user.referral_commission_percent
+    old_max_payments = user.referral_max_commission_payments
     user.referral_commission_percent = request.commission_percent
+    if request.max_commission_payments is not None:
+        user.referral_max_commission_payments = request.max_commission_payments
     await db.commit()
 
     logger.info(
@@ -495,10 +501,16 @@ async def update_commission(
         user_id=user_id,
         old_commission=old_commission,
         new_commission=request.commission_percent,
+        old_max_payments=old_max_payments,
+        new_max_payments=user.referral_max_commission_payments,
         admin_id=admin.id,
     )
 
-    return {'success': True, 'commission_percent': request.commission_percent}
+    return {
+        'success': True,
+        'commission_percent': request.commission_percent,
+        'max_commission_payments': user.referral_max_commission_payments,
+    }
 
 
 @router.post('/{user_id}/revoke')

@@ -13,6 +13,7 @@ class PartnerReferrerItem(BaseModel):
     last_name: str | None = None
     referral_code: str | None = None
     referral_commission_percent: int | None = None
+    referral_max_commission_payments: int | None = None
     effective_referral_commission_percent: int
     invited_count: int
     active_referrals: int
@@ -71,6 +72,11 @@ class PartnerReferralCommissionUpdate(BaseModel):
         ge=0,
         le=100,
         description='Индивидуальный процент реферальной комиссии для пользователя',
+    )
+    referral_max_commission_payments: int | None = Field(
+        default=None,
+        ge=0,
+        description='Индивидуальный лимит комиссионных платежей для пользователя',
     )
 
 

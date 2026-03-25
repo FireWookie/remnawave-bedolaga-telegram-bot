@@ -169,6 +169,7 @@ class AdminApproveRequest(BaseModel):
     """Request to approve a partner application."""
 
     commission_percent: int = Field(..., ge=1, le=100)
+    max_commission_payments: int | None = Field(None, ge=0)
     comment: str | None = Field(None, max_length=2000)
 
 
@@ -186,6 +187,7 @@ class AdminPartnerItem(BaseModel):
     first_name: str | None = None
     telegram_id: int | None = None
     commission_percent: int | None = None
+    max_commission_payments: int | None = None
     total_referrals: int = 0
     total_earnings_kopeks: int = 0
     balance_kopeks: int = 0
@@ -220,6 +222,7 @@ class AdminPartnerDetailResponse(BaseModel):
     first_name: str | None = None
     telegram_id: int | None = None
     commission_percent: int | None = None
+    max_commission_payments: int | None = None
     partner_status: str
     balance_kopeks: int = 0
     total_referrals: int = 0
@@ -238,3 +241,4 @@ class AdminUpdateCommissionRequest(BaseModel):
     """Request to update partner commission."""
 
     commission_percent: int = Field(..., ge=1, le=100)
+    max_commission_payments: int | None = Field(None, ge=0)

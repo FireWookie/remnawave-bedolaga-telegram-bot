@@ -727,6 +727,16 @@ async def execute_merge(
             value=primary.referral_commission_percent,
         )
 
+    # 13b. Перенос referral_max_commission_payments
+    if secondary.referral_max_commission_payments is not None and primary.referral_max_commission_payments is None:
+        primary.referral_max_commission_payments = secondary.referral_max_commission_payments
+        logger.info(
+            'Перенесён referral_max_commission_payments',
+            primary_id=primary.id,
+            secondary_id=secondary.id,
+            value=primary.referral_max_commission_payments,
+        )
+
     # 14. Помечаем secondary как удалённый и очищаем ВСЕ unique constraint и FK поля
     secondary.status = UserStatus.DELETED.value
     secondary.referral_code = None

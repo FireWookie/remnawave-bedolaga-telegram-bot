@@ -85,6 +85,14 @@ def get_effective_referral_commission_percent(user: User) -> int:
     return percent
 
 
+def get_effective_max_commission_payments(user: User) -> int:
+    """Возвращает индивидуальный лимит комиссионных платежей или глобальное значение."""
+    limit = getattr(user, 'referral_max_commission_payments', None)
+    if limit is not None:
+        return limit
+    return settings.REFERRAL_MAX_COMMISSION_PAYMENTS
+
+
 async def mark_user_as_had_paid_subscription(db: AsyncSession, user: User) -> bool:
     try:
         if user.has_had_paid_subscription:
